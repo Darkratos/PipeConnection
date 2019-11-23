@@ -11,13 +11,13 @@ bool cPipe::create( std::string pipe_name )
 
 	//Creates the named pipe
 	pipe_handle = CreateNamedPipeA( pipe_final_name.c_str( ) ,	//Pipe name
-		PIPE_ACCESS_DUPLEX ,									//Pipe access
+		PIPE_ACCESS_DUPLEX ,					//Pipe access
 		PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT ,	//Type of the messages
-		PIPE_UNLIMITED_INSTANCES ,								//Accepts multiple instances
-		BUFSIZE ,												//Output buffer size
-		BUFSIZE ,												//Input buffer size
-		NMPWAIT_USE_DEFAULT_WAIT ,								//Connection time-out
-		NULL );													//Default security attributes
+		PIPE_UNLIMITED_INSTANCES ,				//Accepts multiple instances
+		BUFSIZE ,						//Output buffer size
+		BUFSIZE ,						//Input buffer size
+		NMPWAIT_USE_DEFAULT_WAIT ,				//Connection time-out
+		NULL );							//Default security attributes
 
 	if ( pipe_handle == INVALID_HANDLE_VALUE ) //If it fails to create the pipe, return false
 		return false;
@@ -36,12 +36,12 @@ bool cPipe::create( std::string pipe_name )
 	}
 
 	thread_handle = CreateThread(
-		NULL ,						// No security attribute 
-		0 ,							// Default stack size 
-		pipe_thread ,				// Thread function
+		NULL ,				// No security attribute 
+		0 ,				// Default stack size 
+		pipe_thread ,			// Thread function
 		ReCa < LPVOID >( this ) ,	// Thread parameter 
-		0 ,							// Not suspended 
-		&thread_id );				// Returns thread ID
+		0 ,				// Not suspended 
+		&thread_id );			// Returns thread ID
 
 	if ( thread_handle == 0 ) //If CreateThread fails, disconnect pipe and return false
 	{
@@ -76,12 +76,12 @@ bool cPipe::connect( std::string pipe_name )
 		return false;
 
 	thread_handle = CreateThread(
-		NULL ,						// No security attribute 
-		0 ,							// Default stack size 
-		pipe_thread ,				// Thread function
+		NULL ,				// No security attribute 
+		0 ,				// Default stack size 
+		pipe_thread ,			// Thread function
 		ReCa < LPVOID >( this ) ,	// Thread parameter 
-		0 ,							// Not suspended 
-		&thread_id );				// Returns thread ID
+		0 ,				// Not suspended 
+		&thread_id );			// Returns thread ID
 
 	if ( thread_handle == 0 ) //If CreateThread fails, disconnect pipe and return false
 	{
@@ -118,7 +118,7 @@ int cPipe::get_last_error( void )
 void cPipe::write( std::string message )
 {
 	write_buffer = message;			//Sets the message to the buffer
-	write_flag = true;				//Sets the flag of writing
+	write_flag = true;			//Sets the flag of writing
 	finished_writing = false;
 
 	while ( !finished_writing && last_error == PIPE_NO_ERROR ) //Wait until operation is finished or error
@@ -129,7 +129,7 @@ void cPipe::write( std::string message )
 
 void cPipe::read( void )
 {
-	read_flag = true;				//Sets the flag of reading
+	read_flag = true;				   //Sets the flag of reading
 
 	while ( !has_text && last_error == PIPE_NO_ERROR ) //Wait until there's text or error
 	{
@@ -140,9 +140,9 @@ void cPipe::read( void )
 std::string cPipe::get_message( void )
 {
 	char* holder = new char [ read_buffer.length( ) ];
-	has_text = false;									//Sets the flag for exiting read() loop
-	strcpy( holder , read_buffer.c_str( ) );				//Gets the text from the holder
-	read_buffer = "";									//Sets the holder to an empty string
+	has_text = false;					//Sets the flag for exiting read() loop
+	strcpy( holder , read_buffer.c_str( ) );		//Gets the text from the holder
+	read_buffer = "";					//Sets the holder to an empty string
 	return holder;
 }
 
@@ -251,10 +251,10 @@ DWORD WINAPI cPipe::pipe_thread( LPVOID param )
 			}
 
 			while ( !GetOverlappedResult(
-				pipe->get_pipe_handle( ) , // handle to pipe 
-				&pipe->ov , // OVERLAPPED structure 
-				&bytes_read ,            // bytes transferred 
-				false ) )            // do not wait 
+				pipe->get_pipe_handle( ) , 
+				&pipe->ov , 
+				&bytes_read ,         
+				false ) )          
 			{
 			}
 
