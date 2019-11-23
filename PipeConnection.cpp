@@ -1,235 +1,266 @@
 #include "framework.h"
-#include <process.h>
 
-HANDLE pipe_communication::get_pipe_handle_server( void )
+bool cPipe::create( std::string pipe_name )
 {
-	return pipe_handle_server;
-}
-
-HANDLE pipe_communication::get_pipe_handle_client( void )
-{
-	return pipe_handle_client;
-}
-
-HANDLE pipe_communication::get_thread_handle_server( void )
-{
-	return thread_handle_server;
-}
-
-HANDLE pipe_communication::get_thread_handle_client( void )
-{
-	return thread_handle_client;
-}
-
-bool pipe_communication::create( std::string pipe_name )
-{
-	if ( pipe_handle_server != 0 && pipe_handle_client != 0 )
+	//Checks if the pipe is already created/connected
+	if ( pipe_handle != INVALID_HANDLE_VALUE )
 		return false;
 
-	pipe_name_server.append( pipe_name );
-	pipe_name_server.append( "_server" );
+	//Truncates the chosen name to the relative path
+	pipe_final_name.append( pipe_name );
 
-	pipe_name_client.append( pipe_name );
-	pipe_name_client.append( "_client" );
+	//Creates the named pipe
+	pipe_handle = CreateNamedPipeA( pipe_final_name.c_str( ) ,	//Pipe name
+		PIPE_ACCESS_DUPLEX ,									//Pipe access
+		PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT ,	//Type of the messages
+		PIPE_UNLIMITED_INSTANCES ,								//Accepts multiple instances
+		BUFSIZE ,												//Output buffer size
+		BUFSIZE ,												//Input buffer size
+		NMPWAIT_USE_DEFAULT_WAIT ,								//Connection time-out
+		NULL );													//Default security attributes
 
-	pipe_handle_server = CreateNamedPipeA( pipe_name_server.c_str( ) ,
-		PIPE_ACCESS_INBOUND ,
-		PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT ,
-		PIPE_UNLIMITED_INSTANCES ,
-		1024 * 16 ,
-		1024 * 16 ,
-		NMPWAIT_USE_DEFAULT_WAIT ,
-		NULL );
+	if ( pipe_handle == INVALID_HANDLE_VALUE ) //If it fails to create the pipe, return false
+		return false;
 
-	pipe_handle_client = CreateNamedPipeA( pipe_name_client.c_str( ) ,
-		PIPE_ACCESS_OUTBOUND ,
-		PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT ,
-		PIPE_UNLIMITED_INSTANCES ,
-		1024 * 16 ,
-		1024 * 16 ,
-		NMPWAIT_USE_DEFAULT_WAIT ,
-		NULL );
+	ov.hEvent = CreateEvent( NULL , false , true , NULL );
+	ov.Offset = 0;
+	ov.OffsetHigh = 0;
 
-	if ( pipe_handle_server != INVALID_HANDLE_VALUE && pipe_handle_client != INVALID_HANDLE_VALUE )
+	//Waits for client connection before creating the thread
+	bool connected = ConnectNamedPipe( pipe_handle , NULL ) ? TRUE : ( GetLastError( ) == ERROR_PIPE_CONNECTED );
+
+	if ( !connected ) //If there's no connection, close pipe and return false
 	{
-		thread_handle_server = reinterpret_cast < HANDLE > ( _beginthreadex( NULL , NULL , server_thread , this , 0 , &thread_id_server ) );
-		thread_handle_client = reinterpret_cast < HANDLE > ( _beginthreadex( NULL , NULL , client_thread , this , 0 , &thread_id_client ) );
-		created_pipe = true;
-		return pipe_handle_server != INVALID_HANDLE_VALUE && pipe_handle_client != INVALID_HANDLE_VALUE && thread_handle_server != INVALID_HANDLE_VALUE && thread_handle_client != INVALID_HANDLE_VALUE;
+		CloseHandle( pipe_handle );
+		return false;
 	}
 
-	return false;
+	thread_handle = CreateThread(
+		NULL ,						// No security attribute 
+		0 ,							// Default stack size 
+		pipe_thread ,				// Thread function
+		ReCa < LPVOID >( this ) ,	// Thread parameter 
+		0 ,							// Not suspended 
+		&thread_id );				// Returns thread ID
+
+	if ( thread_handle == 0 ) //If CreateThread fails, disconnect pipe and return false
+	{
+		CloseHandle( pipe_handle );
+		return false;
+	}
+
+	created_pipe = true; //Sets the flag that the pipe has been created successfuly
+
+	return true;
 }
 
-bool pipe_communication::connect( const char* pipe_name )
+bool cPipe::connect( std::string pipe_name )
 {
-	if ( pipe_handle_server != 0 && pipe_handle_client != 0 )
+	//Checks if the pipe is already created/connected
+	if ( pipe_handle != INVALID_HANDLE_VALUE )
 		return false;
 
-	pipe_name_server.append( pipe_name );
-	pipe_name_server.append( "_server" );
+	//Truncates the chosen name to the relative path
+	pipe_final_name.append( pipe_name );
 
-	pipe_name_client.append( pipe_name );
-	pipe_name_client.append( "_client" );
-
-	pipe_handle_server = CreateFile( pipe_name_server.c_str( ) ,
-		GENERIC_WRITE ,
+	//Connects to the pipe
+	pipe_handle = CreateFile( pipe_final_name.c_str( ) ,
+		GENERIC_WRITE | GENERIC_READ ,
 		FILE_SHARE_READ | FILE_SHARE_WRITE ,
 		0 ,
 		OPEN_EXISTING ,
-		0 ,
+		FILE_FLAG_OVERLAPPED ,
 		0 );
 
-	pipe_handle_client = CreateFile( pipe_name_client.c_str( ) ,
-		GENERIC_READ ,
-		FILE_SHARE_READ | FILE_SHARE_WRITE ,
-		0 ,
-		OPEN_EXISTING ,
-		0 ,
-		0 );
+	if ( pipe_handle == INVALID_HANDLE_VALUE ) //If it fails to create the pipe, return false
+		return false;
 
-	if ( pipe_handle_server != INVALID_HANDLE_VALUE && pipe_handle_client != INVALID_HANDLE_VALUE )
+	thread_handle = CreateThread(
+		NULL ,						// No security attribute 
+		0 ,							// Default stack size 
+		pipe_thread ,				// Thread function
+		ReCa < LPVOID >( this ) ,	// Thread parameter 
+		0 ,							// Not suspended 
+		&thread_id );				// Returns thread ID
+
+	if ( thread_handle == 0 ) //If CreateThread fails, disconnect pipe and return false
 	{
-		thread_handle_server = reinterpret_cast < HANDLE > ( _beginthreadex( NULL , NULL , server_thread , this , 0 , &thread_id_server ) );
-		thread_handle_client = reinterpret_cast < HANDLE > ( _beginthreadex( NULL , NULL , client_thread , this , 0 , &thread_id_client ) );
-
-		return thread_handle_server != INVALID_HANDLE_VALUE && thread_handle_client != INVALID_HANDLE_VALUE;
+		CloseHandle( pipe_handle );
+		return false;
 	}
 
-	return false;
+	ov.hEvent = CreateEvent( NULL , false , true , NULL );
+	ov.Offset = 0;
+	ov.OffsetHigh = 0;
+
+	return true;
 }
 
-bool pipe_communication::disconnect( void )
+bool cPipe::disconnect( void )
 {
-	if ( created_pipe )
-		return DisconnectNamedPipe( pipe_handle_client ) && DisconnectNamedPipe( pipe_handle_server );
+	if ( created_pipe ) //If the instance created a named pipe, it has to disconnect
+	{
+		TerminateThread( thread_handle , 0 );
+		return DisconnectNamedPipe( pipe_handle ) && CloseHandle( pipe_handle );
+	}
 
-	return CloseHandle( pipe_handle_client ) && CloseHandle( pipe_handle_server );
+	TerminateThread( thread_handle , 0 );
+	return CloseHandle( pipe_handle );
 }
 
-void pipe_communication::write( std::string message )
+int cPipe::get_last_error( void )
 {
-	write_buffer = message;
-	write_flag = true;
+	int last = last_error;			//Gets the value from the last_error to a holder
+	last_error = PIPE_NO_ERROR;		//Sets the holder to NO_ERROR
+	return last;
 }
 
-void pipe_communication::read( void )
+void cPipe::write( std::string message )
 {
-	read_flag = true;
+	write_buffer = message;			//Sets the message to the buffer
+	write_flag = true;				//Sets the flag of writing
+	finished_writing = false;
+
+	while ( !finished_writing && last_error == PIPE_NO_ERROR ) //Wait until operation is finished or error
+	{
+		Sleep( 1 );
+	}
 }
 
-bool pipe_communication::can_read( void )
+void cPipe::read( void )
 {
-	return read_flag;
+	read_flag = true;				//Sets the flag of reading
+
+	while ( !has_text && last_error == PIPE_NO_ERROR ) //Wait until there's text or error
+	{
+		Sleep( 1 );
+	}
 }
 
-bool pipe_communication::can_write( void )
+std::string cPipe::get_message( void )
+{
+	char* holder = new char [ read_buffer.length( ) ];
+	has_text = false;									//Sets the flag for exiting read() loop
+	strcpy( holder , read_buffer.c_str( ) );				//Gets the text from the holder
+	read_buffer = "";									//Sets the holder to an empty string
+	return holder;
+}
+
+HANDLE cPipe::get_pipe_handle( void )
+{
+	return pipe_handle;
+}
+
+HANDLE cPipe::get_thread_handle( void )
+{
+	return thread_handle;
+}
+
+bool cPipe::can_write( void )
 {
 	return write_flag;
 }
 
-std::string pipe_communication::get_message( void )
+bool cPipe::can_read( void )
 {
-	std::string holder = read_buffer;
-	read_buffer = "";
-	return holder;
+	return read_flag;
 }
 
-void pipe_communication::set_message( std::string message )
+void cPipe::clear_write( void )
 {
-	read_buffer = message;
-}
-
-int pipe_communication::get_last_error( void )
-{
-	int last = last_error;
-	last_error = -1;
-	return last;
-}
-
-void pipe_communication::set_last_error( int error )
-{
-	last_error = error;
-}
-
-void pipe_communication::clear_write( void )
-{
+	finished_writing = true;
 	write_flag = false;
 }
 
-void pipe_communication::clear_read( void )
+void cPipe::clear_read( void )
 {
 	read_flag = false;
 }
 
-std::string pipe_communication::get_write_message( void )
+void cPipe::set_message( std::string message )
+{
+	has_text = true;
+	read_buffer = message;
+}
+
+std::string cPipe::get_write_message( void )
 {
 	return write_buffer;
 }
 
-bool pipe_communication::is_server( void )
+void cPipe::set_last_error( int error )
 {
-	return created_pipe;
+	last_error = error;
 }
 
-UINT32 __stdcall pipe_communication::server_thread( void* pParam )
+DWORD WINAPI cPipe::pipe_thread( LPVOID param )
 {
-	pipe_communication* cur_pipe = reinterpret_cast < pipe_communication* > ( pParam );
-
-	if ( cur_pipe->is_server( ) )
-		if ( !ConnectNamedPipe( cur_pipe->pipe_handle_server , nullptr ) )
-			return false;
+	cPipe* pipe = ReCa < cPipe* >( param );
 
 	bool is_done_reading = false;
 	BYTE* out_message = new BYTE [ 2048 ];
 	DWORD bytes_read;
-
-	while ( true )
-	{
-		if ( cur_pipe->can_read( ) )
-		{
-			HANDLE target_handle = cur_pipe->is_server( ) ? cur_pipe->get_pipe_handle_server( ) : cur_pipe->get_pipe_handle_client( );
-
-			do
-			{
-				is_done_reading = ReadFile( target_handle , out_message , 1024 * sizeof( TCHAR ) , &bytes_read , NULL );
-
-				if ( !is_done_reading && GetLastError( ) != ERROR_MORE_DATA )
-				{
-					cur_pipe->set_last_error( PIPE_READ_ERROR );
-				}
-			} while ( !is_done_reading );
-
-			cur_pipe->set_message( reinterpret_cast < char* > ( out_message ) );
-			cur_pipe->clear_read( );
-		}
-	}
-}
-
-UINT32 __stdcall pipe_communication::client_thread( void* pParam )
-{
-	pipe_communication* cur_pipe = reinterpret_cast < pipe_communication* > ( pParam );
-
-	if ( cur_pipe->is_server( ) )
-		if ( !ConnectNamedPipe( cur_pipe->pipe_handle_client , nullptr ) )
-			return false;
-
 	DWORD written;
 
 	while ( true )
 	{
-		if ( cur_pipe->can_write( ) )
+		if ( pipe->can_read( ) )
 		{
-			std::string msg = cur_pipe->get_write_message( );
-
-			HANDLE target_handle = cur_pipe->is_server( ) ? cur_pipe->get_pipe_handle_client( ) : cur_pipe->get_pipe_handle_server( );
-
-			if ( !WriteFile( target_handle , msg.c_str( ) , msg.length( ) , &written , NULL ) )
+			do
 			{
-				cur_pipe->set_last_error( PIPE_WRITE_ERROR );
+				is_done_reading = ReadFile( pipe->get_pipe_handle( ) , out_message , 1024 * sizeof( TCHAR ) , &bytes_read , &pipe->ov );
+
+				if ( !is_done_reading && GetLastError( ) != ERROR_MORE_DATA && GetLastError( ) != ERROR_IO_PENDING )
+				{
+					pipe->set_last_error( PIPE_READ_ERROR );
+				}
+
+				if ( GetLastError( ) == ERROR_IO_PENDING )
+				{
+					while ( !HasOverlappedIoCompleted( &pipe->ov ) )
+					{
+						Sleep( 1 );
+					}
+					continue;
+				}
+
+				is_done_reading = GetOverlappedResult(
+					pipe->get_pipe_handle( ) , // handle to pipe 
+					&pipe->ov , // OVERLAPPED structure 
+					&bytes_read ,            // bytes transferred 
+					false );            // do not wait 
+
+				if ( !is_done_reading && GetLastError( ) != ERROR_IO_PENDING )
+				{
+					pipe->set_last_error( PIPE_READ_ERROR );
+				}
+
+			} while ( !is_done_reading );
+
+			pipe->set_message( ReCa < char* >( out_message ) );
+			pipe->clear_read( );
+		}
+
+		if ( pipe->can_write( ) )
+		{
+			std::string msg = pipe->get_write_message( );
+
+			if ( !WriteFile( pipe->get_pipe_handle( ) , msg.c_str( ) , msg.length( ) , &written , &pipe->ov ) )
+			{
+				pipe->set_last_error( PIPE_WRITE_ERROR );
 			}
 
-			cur_pipe->clear_write( );
+			while ( !GetOverlappedResult(
+				pipe->get_pipe_handle( ) , // handle to pipe 
+				&pipe->ov , // OVERLAPPED structure 
+				&bytes_read ,            // bytes transferred 
+				false ) )            // do not wait 
+			{
+			}
+
+			pipe->clear_write( );
 		}
 	}
+
+	return 0;
 }
