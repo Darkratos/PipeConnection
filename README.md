@@ -29,4 +29,5 @@ if ( !pipe->connect( "testpipe" ) )
 ```
 
 Everything else you need to know is documented in the files.  
+Special thanks to lucass and iPower for helping me with this project.  
 Enjoy!
