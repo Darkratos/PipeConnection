@@ -27,7 +27,7 @@ bool cPipe::create( std::string pipe_name )
 	ov.OffsetHigh = 0;
 
 	//Waits for client connection before creating the thread
-	bool connected = ConnectNamedPipe( pipe_handle , NULL ) ? TRUE : ( GetLastError( ) == ERROR_PIPE_CONNECTED );
+	bool connected = ConnectNamedPipe( pipe_handle , &ov ) ? TRUE : ( GetLastError( ) == ERROR_PIPE_CONNECTED );
 
 	if ( !connected ) //If there's no connection, close pipe and return false
 	{
