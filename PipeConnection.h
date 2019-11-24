@@ -1,11 +1,9 @@
 #pragma once
+#define ReCa reinterpret_cast
 
 /*
 These are the defines for the operations and errors
 */
-
-#define PIPE_READ 0
-#define PIPE_WRITE 1
 
 #define PIPE_NO_ERROR -1
 #define PIPE_READ_ERROR 1
@@ -54,10 +52,9 @@ public:
 	/*
 	Reads the message from the pipe
 	Use get_message() to retrieve it's contents
-	The function will wait until there is a text to read or an error
-	If the function fails, last_error is set to PIPE_READ_ERROR
+	If the function fails, last_error is set to pipe_ERROR
 	*/
-	void read( void );
+	void read( );
 
 	/*
 	Retrieves the saved message from the buffer after calling read()
@@ -86,8 +83,10 @@ public:
 	void set_message( std::string message );
 	std::string get_write_message( void );
 	void set_last_error( int error );
+	bool is_server( void );
 
 	OVERLAPPED ov;
+	BYTE* out_message = new BYTE [ 2048 ];
 private:
 	std::string write_buffer;
 	std::string read_buffer;
