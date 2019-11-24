@@ -20,20 +20,13 @@ bool cPipe::create( std::string pipe_name )
 		NULL );							//Default security attributes
 
 	if ( pipe_handle == INVALID_HANDLE_VALUE ) //If it fails to create the pipe, return false
+	{
 		return false;
+	}
 
 	ov.hEvent = CreateEvent( NULL , false , true , NULL );
 	ov.Offset = 0;
 	ov.OffsetHigh = 0;
-
-	//Waits for client connection before creating the thread
-	bool connected = ConnectNamedPipe( pipe_handle , &ov ) ? TRUE : ( GetLastError( ) == ERROR_PIPE_CONNECTED );
-
-	if ( !connected ) //If there's no connection, close pipe and return false
-	{
-		CloseHandle( pipe_handle );
-		return false;
-	}
 
 	thread_handle = CreateThread(
 		NULL ,				// No security attribute 
@@ -117,21 +110,19 @@ int cPipe::get_last_error( void )
 
 void cPipe::write( std::string message )
 {
-	write_buffer = message;			//Sets the message to the buffer
-	write_flag = true;			//Sets the flag of writing
-	finished_writing = false;
+	DWORD written;
 
-	while ( !finished_writing && last_error == PIPE_NO_ERROR ) //Wait until operation is finished or error
+	if ( !WriteFile( pipe_handle , message.c_str( ) , message.length( ) , &written , NULL ) )
 	{
-		Sleep( 1 );
+		set_last_error( PIPE_WRITE_ERROR );
 	}
 }
 
-void cPipe::read( void )
+void cPipe::read( )
 {
 	read_flag = true;				   //Sets the flag of reading
 
-	while ( !has_text && last_error == PIPE_NO_ERROR ) //Wait until there's text or error
+	while ( !has_text && last_error == PIPE_NO_ERROR ) //Wait until there thread returns an status
 	{
 		Sleep( 1 );
 	}
@@ -193,12 +184,30 @@ void cPipe::set_last_error( int error )
 	last_error = error;
 }
 
+bool cPipe::is_server( void )
+{
+	return created_pipe;
+}
+
+cPipe* pipe;
+
 DWORD WINAPI cPipe::pipe_thread( LPVOID param )
 {
-	cPipe* pipe = ReCa < cPipe* >( param );
+	pipe = ReCa < cPipe* >( param );
+
+	if ( pipe->is_server( ) )
+	{
+		//Waits for client connection
+		bool connected = ConnectNamedPipe( pipe->get_pipe_handle( ) , &pipe->ov ) ? TRUE : ( GetLastError( ) == ERROR_PIPE_CONNECTED );
+
+		if ( !connected ) //If there's no connection, close pipe and return false
+		{
+			CloseHandle( pipe->get_pipe_handle( ) );
+			return false;
+		}
+	}
 
 	bool is_done_reading = false;
-	BYTE* out_message = new BYTE [ 2048 ];
 	DWORD bytes_read;
 	DWORD written;
 
@@ -208,57 +217,61 @@ DWORD WINAPI cPipe::pipe_thread( LPVOID param )
 		{
 			do
 			{
-				is_done_reading = ReadFile( pipe->get_pipe_handle( ) , out_message , 1024 * sizeof( TCHAR ) , &bytes_read , &pipe->ov );
-
-				if ( !is_done_reading && GetLastError( ) != ERROR_MORE_DATA && GetLastError( ) != ERROR_IO_PENDING )
+				DWORD available = 0;
+				//Using PeekNamedPipe to determine if there's a message available without locking the pipe
+				if ( PeekNamedPipe( pipe->get_pipe_handle( ) , NULL , NULL , NULL , &available , NULL ) )
 				{
-					pipe->set_last_error( PIPE_READ_ERROR );
-				}
-
-				if ( GetLastError( ) == ERROR_IO_PENDING )
-				{
-					while ( !HasOverlappedIoCompleted( &pipe->ov ) )
+					if ( available > 0 )
 					{
-						Sleep( 1 );
+						//There is a message available, so it reads it
+						is_done_reading = ReadFile( pipe->get_pipe_handle( ) , pipe->out_message , 1024 * sizeof( TCHAR ) , &bytes_read , &pipe->ov );
+						
+						//Checks if an error occoured ( if there is more data or a pending operations, just ignore it and wait )
+						if ( !is_done_reading && GetLastError( ) != ERROR_MORE_DATA && GetLastError( ) != ERROR_IO_PENDING )
+						{
+							pipe->set_last_error( PIPE_READ_ERROR );
+						}
+
+						if ( GetLastError( ) == ERROR_IO_PENDING )
+						{
+							while ( !HasOverlappedIoCompleted( &pipe->ov ) )
+							{
+								Sleep( 1 );
+							}
+							continue;
+						}
+
+						//Check the overlapped status
+						is_done_reading = GetOverlappedResult(
+							pipe->get_pipe_handle( ) , // handle to pipe 
+							&pipe->ov , // OVERLAPPED structure 
+							&bytes_read ,            // bytes transferred 
+							false );            // do not wait 
+
+						if ( !is_done_reading && GetLastError( ) != ERROR_IO_PENDING )
+						{
+							pipe->set_last_error( PIPE_READ_ERROR );
+						}
 					}
-					continue;
+					else 
+					{
+						//There is no message, so clear the buffer and exit the loop
+						is_done_reading = true;
+						ZeroMemory( pipe->out_message , 2048 );
+					}
 				}
-
-				is_done_reading = GetOverlappedResult(
-					pipe->get_pipe_handle( ) , // handle to pipe 
-					&pipe->ov , // OVERLAPPED structure 
-					&bytes_read ,            // bytes transferred 
-					false );            // do not wait 
-
-				if ( !is_done_reading && GetLastError( ) != ERROR_IO_PENDING )
+				else 
 				{
+					//There was an error in PeekNamedPipe, clear the buffer, set the error flag and exit
 					pipe->set_last_error( PIPE_READ_ERROR );
+					is_done_reading = true;
+					ZeroMemory( pipe->out_message , 2048 );
 				}
-
 			} while ( !is_done_reading );
 
-			pipe->set_message( ReCa < char* >( out_message ) );
+			//Clear the reading flag and set the message
 			pipe->clear_read( );
-		}
-
-		if ( pipe->can_write( ) )
-		{
-			std::string msg = pipe->get_write_message( );
-
-			if ( !WriteFile( pipe->get_pipe_handle( ) , msg.c_str( ) , msg.length( ) , &written , &pipe->ov ) )
-			{
-				pipe->set_last_error( PIPE_WRITE_ERROR );
-			}
-
-			while ( !GetOverlappedResult(
-				pipe->get_pipe_handle( ) , 
-				&pipe->ov , 
-				&bytes_read ,         
-				false ) )          
-			{
-			}
-
-			pipe->clear_write( );
+			pipe->set_message( ReCa < char* > ( pipe->out_message ) );
 		}
 	}
 
